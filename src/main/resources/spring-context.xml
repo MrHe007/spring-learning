@@ -12,4 +12,7 @@
     <bean id="userService" class="com.bigguy.spring.service.UserSvc" />
 
 
+    <bean id="userBean" name="userBean2, userBean3, userBean4" class="com.bigguy.spring.bean.UserBean">
+
+    </bean>
 </beans>

@@ -2,9 +2,11 @@
 
 1、如果做错误处理
 
-### 2、解析spring 源码
+# 解析spring 源码
 
-[参考博客](https://blog.csdn.net/baomw/article/details/83956300)
+[参考博客](https://blog.csdn.net/baomw/article/details/83956300) 
+
+[官方文档](https://docs.spring.io/spring-framework/docs/current/spring-framework-reference/core.html#beans-definition)
 
 # 基础知识
 
@@ -331,3 +333,4 @@ private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate deleg
 
 
 
+o

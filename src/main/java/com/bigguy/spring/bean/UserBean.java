@@ -14,6 +14,7 @@ you entered into with IBOXCHAIN inc.
 package com.bigguy.spring.bean;
 
 import lombok.Data;
+import org.springframework.context.annotation.Bean;
 
 /**
  * @author ：hechen

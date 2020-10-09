@@ -271,6 +271,165 @@ protected void parseBeanDefinitions(Element root, BeanDefinitionParserDelegate d
 }
 ```
 
+#### 2.8.3、BeanDefinitionHolder
+
+> 解析 <bean> 标签，将bean 的一些数据装填到该对象中
+
+````java
+public class BeanDefinitionHolder implements BeanMetadataElement {
+
+	private final BeanDefinition beanDefinition;
+
+	private final String beanName;
+
+	private final String[] aliases;
+    
+}
+````
+
+#### 2.8.4 BeanDefinitionParserDelegate
+
+> 用于解析 spring-config.xml 的类。维护很多全局数据
+
+##### 属性
+
+```java
+/**
+	 * Stores all used bean names so we can enforce uniqueness on a per
+	 * beans-element basis. Duplicate bean ids/names may not exist within the
+	 * same level of beans element nesting, but may be duplicated across levels.
+	 */
+// 解析 spring-config.xml 中的 bean 标签时，放在该容器中。用于校验 beanName 和 beanAlias 的唯一性
+private final Set<String> usedNames = new HashSet<String>();
+```
+
+```java
+// 解析 <bean> 标签时，校验bean 的唯一性。beanName 不能和 beanAlias 同名
+protected void checkNameUniqueness(String beanName, List<String> aliases, Element beanElement) {
+    String foundName = null;
+
+    if (StringUtils.hasText(beanName) && this.usedNames.contains(beanName)) {
+        foundName = beanName;
+    }
+    if (foundName == null) {
+        foundName = CollectionUtils.findFirstMatch(this.usedNames, aliases);
+    }
+    if (foundName != null) {
+        error("Bean name '" + foundName + "' is already used in this <beans> element", beanElement);
+    }
+
+    this.usedNames.add(beanName);
+    this.usedNames.addAll(aliases);
+}
+```
+
+解析<bean> 标签
+
+```java
+public BeanDefinitionHolder parseBeanDefinitionElement(Element ele, BeanDefinition containingBean) {
+    	// 解析id
+		String id = ele.getAttribute(ID_ATTRIBUTE);
+    	// 解析 name
+		String nameAttr = ele.getAttribute(NAME_ATTRIBUTE);
+		// 解析别名。别名是有多个，用",", 或者" "隔开
+		List<String> aliases = new ArrayList<String>();
+		if (StringUtils.hasLength(nameAttr)) {
+			String[] nameArr = StringUtils.tokenizeToStringArray(nameAttr, MULTI_VALUE_ATTRIBUTE_DELIMITERS);
+			aliases.addAll(Arrays.asList(nameArr));
+		}
+
+		if (containingBean == null) {
+            // 校验 bean 的beanName 和 alias 的唯一性
+			checkNameUniqueness(beanName, aliases, ele);
+		}
+
+		AbstractBeanDefinition beanDefinition = parseBeanDefinitionElement(ele, beanName, containingBean);
+		if (beanDefinition != null) {
+			if (!StringUtils.hasText(beanName)) {
+				try {
+					if (containingBean != null) {
+						beanName = BeanDefinitionReaderUtils.generateBeanName(
+								beanDefinition, this.readerContext.getRegistry(), true);
+					}
+					else {
+						beanName = this.readerContext.generateBeanName(beanDefinition);
+						
+						String beanClassName = beanDefinition.getBeanClassName();
+						if (beanClassName != null &&
+								beanName.startsWith(beanClassName) && beanName.length() > beanClassName.length() &&
+								!this.readerContext.getRegistry().isBeanNameInUse(beanClassName)) {
+							aliases.add(beanClassName);
+						}
+					}
+				}
+				catch (Exception ex) {
+				}
+			}
+			String[] aliasesArray = StringUtils.toStringArray(aliases);
+			return new BeanDefinitionHolder(beanDefinition, beanName, aliasesArray);
+		}
+		return null;
+	}
+```
+
+### 2.9、别名注册器
+
+> 一个 beanName 可以有多个别名在 <bean> 标签中指定。或者 @Bean
+
+```java
+public interface AliasRegistry {
+
+	void registerAlias(String name, String alias);
+	
+	void removeAlias(String alias);
+
+	boolean isAlias(String name);
+
+	String[] getAliases(String name);
+}
+```
+
+SimpleAliasRegistry
+
+> 别名放在 map 的key中，value 中放 beanName
+
+```java
+public class SimpleAliasRegistry implements AliasRegistry {
+
+	private final Map<String, String> aliasMap = new ConcurrentHashMap<String, String>(16);
+
+	@Override
+	public void registerAlias(String name, String alias) {
+		Assert.hasText(name, "'name' must not be empty");
+		Assert.hasText(alias, "'alias' must not be empty");
+		if (alias.equals(name)) {
+			this.aliasMap.remove(alias);
+		}
+		else {
+			String registeredName = this.aliasMap.get(alias);
+			if (registeredName != null) {
+				if (registeredName.equals(name)) {
+					// An existing alias - no need to re-register
+					return;
+				}
+				if (!allowAliasOverriding()) {
+					throw new IllegalStateException("Cannot register alias '" + alias + "' for name '" +
+							name + "': It is already registered for name '" + registeredName + "'.");
+				}
+			}
+			checkForAliasCircle(name, alias);
+			this.aliasMap.put(alias, name);
+		}
+	}
+
+```
+
+
+
+
+
+
+
 ## 3、解析默认标签
 
 DefaultBeanDefinitionDocumentReader
@@ -293,7 +452,286 @@ private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate deleg
 }
 ```
 
+### 3.1、bean标签解析及注册
 
+#### 3.1.1 解析BeanDefinition
+
+1. BeanDefinition 是一个接口。在Spring中存在三种实现：RootBeanDefinition、ChildBeanDefinition、GenericBeanDefinition。
+2. AbstractBeanDefinition 是 BeanDefinition <bean> 标签在容器中的表现
+3. <bean> 拥有 beanClass、scope、lazyInit 属性
+4. Spring 解析 BeanDefinition 并将所有的BeanDefinition 注册到 BeanDefinitionRegistry 中，类似数据库。后续所有针对 BeanDefinition 都是从 BeanDefinitionRegistry中取
+
+
+
+解析<bean> 标签
+
+```java
+public AbstractBeanDefinition parseBeanDefinitionElement(
+			Element ele, String beanName, BeanDefinition containingBean) {
+
+		this.parseState.push(new BeanEntry(beanName));
+
+		String className = null;
+		if (ele.hasAttribute(CLASS_ATTRIBUTE)) {
+			className = ele.getAttribute(CLASS_ATTRIBUTE).trim();
+		}
+		try {
+			String parent = null;
+			if (ele.hasAttribute(PARENT_ATTRIBUTE)) {
+				parent = ele.getAttribute(PARENT_ATTRIBUTE);
+			}
+			AbstractBeanDefinition bd = createBeanDefinition(className, parent);
+			// 解析属性：scope、singleton、abstract、lazy-nit、autowire、dependency-check、primary、init-method、factory-bean、factory-method
+			parseBeanDefinitionAttributes(ele, beanName, containingBean, bd);
+			bd.setDescription(DomUtils.getChildElementValueByTagName(ele, DESCRIPTION_ELEMENT));
+
+			parseMetaElements(ele, bd);
+			parseLookupOverrideSubElements(ele, bd.getMethodOverrides());
+			parseReplacedMethodSubElements(ele, bd.getMethodOverrides());
+			// 解析构造函数
+			parseConstructorArgElements(ele, bd);
+             // 解析propertity 标签
+			parsePropertyElements(ele, bd);
+			parseQualifierElements(ele, bd);
+
+			bd.setResource(this.readerContext.getResource());
+			bd.setSource(extractSource(ele));
+			return bd;
+		}
+		finally {
+			this.parseState.pop();
+		}
+		return null;
+	}
+```
+
+
+
+
+
+
+
+#### 3.1.3 相关类
+
+
+
+
+
+##### BeanDefinitionRegistry
+
+> BeanDefinition 的注册中心
+
+```java
+public interface BeanDefinitionRegistry extends AliasRegistry {
+
+	// 注册bean
+    void registerBeanDefinition(String beanName, BeanDefinition beanDefinition);
+	// 去掉bean
+	void removeBeanDefinition(String beanName) throws NoSuchBeanDefinitionException;
+	// 通过beanName 获取bean详情
+	BeanDefinition getBeanDefinition(String beanName) throws NoSuchBeanDefinitionException;
+	// 判断是否包含bean
+	boolean containsBeanDefinition(String beanName);
+	// 获取所有的beanName
+	String[] getBeanDefinitionNames();
+	// 获取bean个数
+	int getBeanDefinitionCount();
+
+	boolean isBeanNameInUse(String beanName);
+
+}
+```
+
+##### SimpleBeanDefinitionRegistry
+
+> 1、简单的bean定义注册中心
+>
+> 2、继承了bean别名注册中心
+
+```java
+public class SimpleBeanDefinitionRegistry extends SimpleAliasRegistry implements BeanDefinitionRegistry {
+
+	/** Map of bean definition objects, keyed by bean name */
+	private final Map<String, BeanDefinition> beanDefinitionMap = new ConcurrentHashMap<String, BeanDefinition>(64);
+}
+```
+
+##### AliasRegistry
+
+> 别名注册中心
+
+```java
+public interface AliasRegistry {
+
+	void registerAlias(String name, String alias);
+
+	void removeAlias(String alias);
+
+	boolean isAlias(String name);
+
+	String[] getAliases(String name);
+
+}
+```
+
+##### SimpleAliasRegistry
+
+> 简单的别名注册器：<key, value>  --  <beanAlias，beanName>
+
+```java
+public class SimpleAliasRegistry implements AliasRegistry {
+
+	/** Map from alias to canonical name */
+	private final Map<String, String> aliasMap = new ConcurrentHashMap<String, String>(16);
+
+}
+```
+
+#### 3.1.4、注册解析 BeanDefinition
+
+> 1、解析完 BeanDefinition 后，装配到 bean 注册中心中
+>
+> 2、XmlReaderContext 中的 AbstractBeanDefinitionReader 属性中存在 Bean解析中的一些数据：bean注册中心
+>
+> 3、bean注册中心实现了 bean别名注册中心
+
+```java
+public static void registerBeanDefinition(
+    BeanDefinitionHolder definitionHolder, BeanDefinitionRegistry registry){
+    // Register bean definition under primary name.
+    String beanName = definitionHolder.getBeanName();
+    registry.registerBeanDefinition(beanName, definitionHolder.getBeanDefinition());
+
+    // Register aliases for bean name, if any.
+    String[] aliases = definitionHolder.getAliases();
+    if (aliases != null) {
+        for (String alias : aliases) {
+            registry.registerAlias(beanName, alias);
+        }
+    }
+}
+```
+
+## 5、Bean 加载
+
+```java
+
+```
+
+
+
+
+
+### 5.1、FactoryBean
+
+> 1、用于生产单独的 bean。传统的 bean 从 beanFactory中生产，需要指定各种属性，比较负责。采用实现 FactoryBean 的方式比较简单
+
+
+
+#### FactoryBean
+
+```java
+@Component("user")
+public class UserFactoryBean implements FactoryBean<User> {
+
+    @Override
+    public User getObject() throws Exception {
+        return new User("rose");
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+        return User.class;
+    }
+
+    @Override
+    public boolean isSingleton() {
+        return false;
+    }
+}
+```
+
+#### spring-config.xml
+
+```xml
+<bean id="user" class="com.bigguy.spring.entity.User" >
+    <property name="username" value="tom" />
+</bean>
+
+<bean id="userFactory" class="com.bigguy.spring.service.UserFactoryBean" >
+</bean>
+```
+
+#### 测试
+
+> 1、实现FactoryBean 接口的 bean 可以直接获取工厂生产的实例
+>
+> 2、当需要获得该 FactoryBean 工厂实例时，需要在beanName 前面加"&"。不加的话表示获取工厂生产的 bean
+
+```java
+public static void main(String[] args) {
+    BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
+    User user = beanFactory.getBean( "userFactory", User.class);
+
+    UserFactoryBean userFactoryBean = beanFactory.getBean("&userFactory", UserFactoryBean.class);
+    User user2 = userFactoryBean.getObject();
+
+    System.out.println(user);
+    // 两个实例是同一个
+    System.out.println(user.equals(user2));
+}
+```
+
+
+
+## 错误处理
+
+ReadContext
+
+```java
+/**
+* Raise a regular error.
+*/
+public void error(String message, Object source, ParseState parseState, Throwable cause) {
+    Location location = new Location(getResource(), source);
+    this.problemReporter.error(new Problem(message, location, parseState, cause));
+}
+```
+
+
+
+
+
+
+
+```java
+public class FailFastProblemReporter implements ProblemReporter {
+
+	private Log logger = LogFactory.getLog(getClass());
+
+	public void setLogger(Log logger) {
+		this.logger = (logger != null ? logger : LogFactory.getLog(getClass()));
+	}
+
+	@Override
+	public void fatal(Problem problem) {
+		throw new BeanDefinitionParsingException(problem);
+	}
+
+	
+	@Override
+	public void error(Problem problem) {
+		throw new BeanDefinitionParsingException(problem);
+	}
+
+	@Override
+	public void warning(Problem problem) {
+		this.logger.warn(problem, problem.getRootCause());
+	}
+
+}
+
+```
 
 
 

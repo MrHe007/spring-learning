@@ -1,8 +1,9 @@
 package com.bigguy.spring.config;
 
+import com.bigguy.spring.entity.User;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.stereotype.Component;
 
 /**
  * @Description:
@@ -13,5 +14,11 @@ import org.springframework.stereotype.Component;
 // 扫描包下的 compent
 @ComponentScan(basePackages = "com.bigguy.spring.service")
 public class SpringContext {
+
+    @Bean
+    public User user(){
+
+        return new User("jeck");
+    }
 
 }

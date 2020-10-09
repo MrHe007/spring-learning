@@ -11,6 +11,12 @@
 <!--    声明userService-->
     <bean id="userService" class="com.bigguy.spring.service.UserSvc" />
 
+    <bean id="user" class="com.bigguy.spring.entity.User" >
+        <property name="username" value="tom" />
+    </bean>
+
+    <bean id="userFactory" class="com.bigguy.spring.service.UserFactoryBean" >
+    </bean>
 
     <bean id="userBean" name="userBean2, userBean3, userBean4" class="com.bigguy.spring.bean.UserBean">
 

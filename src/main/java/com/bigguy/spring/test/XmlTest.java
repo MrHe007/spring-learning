@@ -1,8 +1,13 @@
 package com.bigguy.spring.test;
 
+import com.bigguy.spring.entity.User;
+import com.bigguy.spring.service.UserFactoryBean;
 import com.bigguy.spring.service.UserSvc;
+import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.xml.XmlBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.core.io.ClassPathResource;
 
 /**
  * @Description:
@@ -14,8 +19,23 @@ public class XmlTest {
     private static final String SPRING_CONFIG_PATH = "spring-context.xml";
 
     public static void main(String[] args) {
-        testMain();
+        BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
+        User user = beanFactory.getBean( "userFactory", User.class);
+
+        UserFactoryBean userFactoryBean = beanFactory.getBean("&userFactory", UserFactoryBean.class);
+        User user2 = userFactoryBean.getObject();
+
+        System.out.println(user);
+        // 两个实例是同一个
+        System.out.println(user.equals(user2));
     }
+
+    private static void testBeanFactory() {
+        BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
+        UserSvc userSvc = beanFactory.getBean(UserSvc.class);
+        UserSvc userSvc2 = (UserSvc)beanFactory.getBean("userSvc");
+    }
+
 
     private static void testMain() {
         String xmlPath = "spring-context.xml";

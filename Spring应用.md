@@ -618,17 +618,84 @@ public static void registerBeanDefinition(
 
 ```
 
+### 5.1、流程
+
+#### a、转换 beanName
+
+- 传入的 beanName 可能是factoryBean，或者是 bean 的别名。需要转换成最终的 beanName
+- factoryBean：如果是"&"开头，表示是取 factoryBean 本身，而不是其生产的bean
+- beanAlias：A -> B -> C ,最终取C
+
+```java
+protected String transformedBeanName(String name) {
+    return canonicalName(BeanFactoryUtils.transformedBeanName(name));
+}
+// 转换 beanName，去除 &
+public static String transformedBeanName(String name) {
+    String beanName = name;
+    while (beanName.startsWith(BeanFactory.FACTORY_BEAN_PREFIX)) {
+        beanName = beanName.substring(BeanFactory.FACTORY_BEAN_PREFIX.length());
+    }
+    return beanName;
+}
+// 将别名转换为beanName，取最终的 beanName
+public String canonicalName(String name) {
+    String canonicalName = name;
+    // Handle aliasing...
+    String resolvedName;
+    do {
+        resolvedName = this.aliasMap.get(canonicalName);
+        if (resolvedName != null) {
+            canonicalName = resolvedName;
+        }
+    }while (resolvedName != null);
+    return canonicalName;
+}
+```
+
+#### b、尝试从单例缓存中取该bean
+
+[Spring解决循环依赖](https://www.cnblogs.com/jajian/p/10241932.html)
+
+DefaultSingletonBeanRegistry
+
+```java
+/** Cache of singleton objects: bean name --> bean instance */
+private final Map<String, Object> singletonObjects = new ConcurrentHashMap<String, Object>(256);
+
+
+// 尝试从缓存中取 bean
+protected Object getSingleton(String beanName, boolean allowEarlyReference) {
+    Object singletonObject = this.singletonObjects.get(beanName);
+    if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
+        synchronized (this.singletonObjects) {
+            singletonObject = this.earlySingletonObjects.get(beanName);
+            if (singletonObject == null && allowEarlyReference) {
+                ObjectFactory<?> singletonFactory = this.singletonFactories.get(beanName);
+                if (singletonFactory != null) {
+                    singletonObject = singletonFactory.getObject();
+                    this.earlySingletonObjects.put(beanName, singletonObject);
+                    this.singletonFactories.remove(beanName);
+                }
+            }
+        }
+    }
+    return (singletonObject != NULL_OBJECT ? singletonObject : null);
+}
+
+```
 
 
 
 
-### 5.1、FactoryBean
+
+
+
+### 5.2、bean 加载过程中细节
+
+#### 5.2.1、FactoryBean
 
 > 1、用于生产单独的 bean。传统的 bean 从 beanFactory中生产，需要指定各种属性，比较负责。采用实现 FactoryBean 的方式比较简单
-
-
-
-#### FactoryBean
 
 ```java
 @Component("user")
@@ -651,7 +718,7 @@ public class UserFactoryBean implements FactoryBean<User> {
 }
 ```
 
-#### spring-config.xml
+##### spring-config.xml
 
 ```xml
 <bean id="user" class="com.bigguy.spring.entity.User" >
@@ -662,7 +729,7 @@ public class UserFactoryBean implements FactoryBean<User> {
 </bean>
 ```
 
-#### 测试
+##### 测试
 
 > 1、实现FactoryBean 接口的 bean 可以直接获取工厂生产的实例
 >
@@ -683,6 +750,253 @@ public static void main(String[] args) {
 ```
 
 
+
+
+
+
+
+
+
+#### 5.2.2、缓存中获取单例 bean
+
+1. 单例在 Spring 的容器中只会被创建一次，后续在获取的时候，直接从单例缓存中获取。
+2. 上面获取也只是在缓存中尝试获取。如果没有取到会从 singletonFactories 中加载
+3. Spring 创建 bean 的原则是不等 bean “完全”创建完成就会将创建bean 的 ObjectFactory提早曝光到缓存中
+4. 一旦下个bean 创建需要依赖上个bean，直接使用 ObjectFactory
+
+> ```java
+> /** Cache of early singleton objects: bean name --> bean instance */
+> private final Map<String, Object> earlySingletonObjects = new HashMap<String, Object>(16);
+> ```
+>
+> earlySingletonObjects：
+>
+> 	- 将正在加载的 bean放在该容器中
+> 	- 用于保存 bean 的引用，解决 field，和 setter 的循环依赖问题。
+> 	- 保存的bean 已经实例化了，但是没有进行属性注入...等其他后续操作
+
+
+
+- singletonObjects：保存最终完整的 bean（实例化，属性注入...）
+- earlySingletonObjects：保存正在加载的 bean（此时的 bean 不是完整的bean。可能实例化了，但是没有属性注入等其他操作）
+- singletonFactories：beanName 和 bean工厂之间的关系
+
+
+
+```java
+protected Object getSingleton(String beanName, boolean allowEarlyReference) {
+    	// 检查缓存是否存在实例
+		Object singletonObject = this.singletonObjects.get(beanName);
+		if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
+			synchronized (this.singletonObjects) {
+                // 如果该 bean 正在加载，则不作处理。正在处理时：singletonObject 不为空
+				singletonObject = this.earlySingletonObjects.get(beanName);
+				if (singletonObject == null && allowEarlyReference) {
+           // 当某些方法需要提前初始化时(AOP操作)，会调用 addSingletonFactory 方法将对于的 ObjectFactory "初始化策略"存储在  singletonFactories 中
+					ObjectFactory<?> singletonFactory = this.singletonFactories.get(beanName);
+					if (singletonFactory != null) {
+                        // 调用预先设定的 getObject 方法
+						singletonObject = singletonFactory.getObject();
+                        // 记录缓存：earlySingletonObjects 和 singletonFactories 互斥
+						this.earlySingletonObjects.put(beanName, singletonObject);
+						this.singletonFactories.remove(beanName);
+					}
+				}
+			}
+		}
+		return (singletonObject != NULL_OBJECT ? singletonObject : null);
+	}
+```
+
+#### 5.2.3、从 bean 实例中获取对象
+
+> 无论是从缓存中获取对象还是 
+
+得到 bean实例后我们需要校验该bean是不是FactoryBean，如果是FactoryBean的话，需要调用该对象的 getObject 方法作为返回值
+
+AbstractBeanFactory
+
+```java
+
+Object sharedInstance = getSingleton(beanName);
+if (sharedInstance != null && args == null) {
+    if (logger.isDebugEnabled()) {
+        if (isSingletonCurrentlyInCreation(beanName)) {
+            logger.debug("Returning eagerly cached instance of singleton bean '" + beanName +
+                         "' that is not fully initialized yet - a consequence of a circular reference");
+        }
+        else {
+            logger.debug("Returning cached instance of singleton bean '" + beanName + "'");
+        }
+    }
+    bean = getObjectForBeanInstance(sharedInstance, name, beanName, null);
+}
+// ....
+
+protected Object getObjectForBeanInstance(
+    Object beanInstance, String name, String beanName, RootBeanDefinition mbd) {
+    // 如果是 FactoryBean 类型的bean，该bean 一定是实现了 FactoryBean接口的
+    if (BeanFactoryUtils.isFactoryDereference(name) && !(beanInstance instanceof FactoryBean)) {
+        throw new BeanIsNotAFactoryException(transformedBeanName(name), beanInstance.getClass());
+    }
+    // 如果是普通的 bean，直接返回
+    if (!(beanInstance instanceof FactoryBean) || BeanFactoryUtils.isFactoryDereference(name)) {
+        return beanInstance;
+    }
+    // 下面是针对factoryBean的判断规则
+    Object object = null;
+    if (mbd == null) {
+        // 尝试从缓存中加载 factoryBean 返回的bean。这种factoryBean生产bean的方式也是单例的
+        object = getCachedObjectForFactoryBean(beanName);
+    }
+    if (object == null) {
+        // 转换成factoryBean
+        FactoryBean<?> factory = (FactoryBean<?>) beanInstance;
+        // Caches object obtained from FactoryBean if it is a singleton.
+        if (mbd == null && containsBeanDefinition(beanName)) {
+            mbd = getMergedLocalBeanDefinition(beanName);
+        }
+        boolean synthetic = (mbd != null && mbd.isSynthetic());
+        // 从 factoryBean中获取 bean
+        object = getObjectFromFactoryBean(factory, beanName, !synthetic);
+    }
+    return object;
+}
+/**  从 factoryBean中获取 bean
+	1、对单例，多例区分处理
+	2、单例：获取后存到缓存中。多例：不存缓存。每次取到的都是新的对象。
+	3、后续 postProcess.... 操作
+*/
+protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanName, boolean shouldPostProcess) {
+    // 判断该 factory 是否是单例的
+    if (factory.isSingleton() && containsSingleton(beanName)) {
+        synchronized (getSingletonMutex()) {
+            Object object = this.factoryBeanObjectCache.get(beanName);
+            if (object == null) {
+                // 真正获取 bean
+                object = doGetObjectFromFactoryBean(factory, beanName);
+
+                if (object != null && shouldPostProcess) {
+                    try {
+                        object = postProcessObjectFromFactoryBean(object, beanName);
+                    }
+                    //...
+                }
+                // 获取到 bean后，放到缓存中
+                this.factoryBeanObjectCache.put(beanName, (object != null ? object : NULL_OBJECT));
+            }
+            return (object != NULL_OBJECT ? object : null);
+        }
+    }
+    else {
+        // 多例
+        Object object = doGetObjectFromFactoryBean(factory, beanName);
+        if (object != null && shouldPostProcess) {
+            try {
+                // 执行 postProcessObject....
+                object = postProcessObjectFromFactoryBean(object, beanName);
+            }
+           //...
+        }
+        return object;
+    }
+}
+
+```
+
+
+
+
+
+
+
+
+
+#### 5.2.2、解决循环依赖
+
+[参考博客](https://www.cnblogs.com/jajian/p/10241932.html) [参考博客2](https://xie.infoq.cn/article/e3b46dc2c0125ab812f9aa977)
+
+循环依赖：在 bean 实例过程中，引用其它 bean（构造器，属性、方法中），造成循环依赖
+
+![img](https://img2018.cnblogs.com/blog/1162587/201901/1162587-20190108224120891-308387799.png)
+
+
+
+循环依赖主要存在三种情况：
+
+1. 构造器中：出现循环依赖会报错
+2. 属性、方法中：出现循环依赖不会报错
+3. scope=prototype 类型的 bean：出现循环依赖会报错
+
+
+
+为什么在当其它的 bean 作为属性或者方法中的参数进行注入时不会报错呢？
+
+原因是 Spring 对 bean 解析的流程上。
+
+![img](https://img2018.cnblogs.com/blog/1162587/201901/1162587-20190108223107433-1167042193.png)
+
+
+
+可以大致将 spring 对 bean 加载分为三个步骤：
+
+1. 实例化bean对象。
+2. 设置对象属性
+3. 后置处理
+
+##### 构造器参数循环依赖
+
+1. Spring容器会将每一个正在创建的 Bean 标识符放在一个**“当前创建Bean池”**中（singletonsCurrentlyInCreation）
+
+```java
+// 注意是一个 set 集合
+private final Set<String> singletonsCurrentlyInCreation = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>(16));
+```
+
+2. Bean标识符在创建过程中将一直保持在这个池中，因此如果在创建Bean过程中发现自己已经在“当前创建Bean池”里时将抛出`BeanCurrentlyInCreationException`异常表示循环依赖
+3. 而对于创建完毕的Bean将从“当前创建Bean池”中清除掉。
+
+
+
+上方案例解析：
+
+1. Spring容器先创建单例StudentA，StudentA依赖StudentB，然后将A放在**“当前创建Bean池”**中，此时创建 StudentB，StudentB 依赖 StudentC ，然后将B放在**“当前创建Bean池”**中
+2. 此时创建StudentC，StudentC又依赖StudentA， 但是，此时StudentA已经在池中，所以会报错
+3. 因为在池中的Bean都是未初始化完的，所以会依赖错误 （初始化完的Bean会从池中移除）。
+
+
+
+https://xie.infoq.cn/article/e3b46dc2c0125ab812f9aa977
+
+```JAVA
+public Object getSingleton(String beanName) {
+   return getSingleton(beanName, true);
+}
+
+protected Object getSingleton(String beanName, boolean allowEarlyReference) {
+   //首先去一级缓存中获取如果获取的到说明bean已经存在，直接返回
+   Object singletonObject = this.singletonObjects.get(beanName);
+   //如果一级缓存中不存在，则去判断该bean是否在创建中，如果该bean正在创建中，就说明了，这个时候发生了循环依赖
+   if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
+      synchronized (this.singletonObjects) {
+         //如果发生循环依赖，首先去二级缓存中获取，如果获取到则返回，这个地方就是获取aop增强以后的bean
+         singletonObject = this.earlySingletonObjects.get(beanName);
+         //如果二级缓存中不存在，且允许提前访问三级引用
+         if (singletonObject == null && allowEarlyReference) {
+            //去三级缓存中获取
+            ObjectFactory<?> singletonFactory = this.singletonFactories.get(beanName);
+            if (singletonFactory != null) {
+               //如果三级缓存中的lambda表达式存在，执行aop，获取增强以后的对象，为了防止重复aop，将三级缓存删除，升级到二级缓存中
+               singletonObject = singletonFactory.getObject();
+               this.earlySingletonObjects.put(beanName, singletonObject);
+               this.singletonFactories.remove(beanName);
+            }
+         }
+      }
+   }
+   return singletonObject;
+}
+```
 
 ## 错误处理
 

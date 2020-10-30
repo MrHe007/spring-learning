@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
  **/
 @Configuration
 // 扫描包下的 compent
-@ComponentScan(basePackages = "com.bigguy.spring.service")
+@ComponentScan(basePackages = "com.bigguy.spring")
 public class SpringContext {
 
     @Bean

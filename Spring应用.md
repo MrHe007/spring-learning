@@ -759,6 +759,8 @@ public static void main(String[] args) {
 
 #### 5.2.2、缓存中获取单例 bean
 
+> 实例创建后保存到缓存中，所有的单例 bean 都是使用的时候才去实例化的吗？
+
 1. 单例在 Spring 的容器中只会被创建一次，后续在获取的时候，直接从单例缓存中获取。
 2. 上面获取也只是在缓存中尝试获取。如果没有取到会从 singletonFactories 中加载
 3. Spring 创建 bean 的原则是不等 bean “完全”创建完成就会将创建bean 的 ObjectFactory提早曝光到缓存中
@@ -780,6 +782,9 @@ public static void main(String[] args) {
 - singletonObjects：保存最终完整的 bean（实例化，属性注入...）
 - earlySingletonObjects：保存正在加载的 bean（此时的 bean 不是完整的bean。可能实例化了，但是没有属性注入等其他操作）
 - singletonFactories：beanName 和 bean工厂之间的关系
+- singletonsCurrentlyInCreation：该bean是否在创建中
+  - 在Spring中，会有个专门的属性默认为DefaultSingletonBeanRegistry的singletonsCurrentlyInCreation来记录bean的加载状态
+  - 在bean开始创建前会将beanName记录在属性中，在bean创建结束后会将beanName从属性中移除
 
 
 
@@ -904,7 +909,65 @@ protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanNam
 
 ```
 
+#### 5.2.4、获取单例
 
+> - 如果缓存中不存在已经加载的单例，就需要从头开始加载 bean
+> - 注意这里只是“加载”bean（实例化改bean，但是属性未注入），并不相当于是将该bean完全创建完成了
+>
+> 
+
+```java
+public Object getSingleton(String beanName, ObjectFactory<?> singletonFactory) {
+    synchronized (this.singletonObjects) {
+        // 检查是否加载了该bean
+        Object singletonObject = this.singletonObjects.get(beanName);
+        if (singletonObject == null) {
+            if (this.singletonsCurrentlyInDestruction) {
+                throw new Exception(beanName);
+            }
+            // 创建bean 之前：判断是否出现循环依赖
+            beforeSingletonCreation(beanName);
+            boolean newSingleton = false;
+            boolean recordSuppressedExceptions = (this.suppressedExceptions == null);
+            if (recordSuppressedExceptions) {
+                this.suppressedExceptions = new LinkedHashSet<Exception>();
+            }
+            try {
+                // ObjectFactory 中创建对象
+                singletonObject = singletonFactory.getObject();
+                newSingleton = true;
+            }
+            catch (IllegalStateException ex) {
+                //..
+            }
+            finally {
+                if (recordSuppressedExceptions) {
+                    this.suppressedExceptions = null;
+                }
+                // 加载完后，需要从"正在创建bean的缓存"中移除该bean
+                afterSingletonCreation(beanName);
+            }
+            if (newSingleton) {
+                // 加载完后将该bean加入到"singletonObjects"中。并删除各种辅助状态
+                addSingleton(beanName, singletonObject);
+            }
+        }
+        return (singletonObject != NULL_OBJECT ? singletonObject : null);
+    }
+}
+
+// bean加载完后，加入到缓存中。并删除各种辅助状态
+protected void addSingleton(String beanName, Object singletonObject) {
+    synchronized (this.singletonObjects) {
+        this.singletonObjects.put(beanName, (singletonObject != null ? singletonObject : NULL_OBJECT));
+        this.singletonFactories.remove(beanName);
+        this.earlySingletonObjects.remove(beanName);
+        this.registeredSingletons.add(beanName);
+    }
+}
+```
+
+#### 5.2.5、准备创建bean
 
 
 
@@ -997,6 +1060,143 @@ protected Object getSingleton(String beanName, boolean allowEarlyReference) {
    return singletonObject;
 }
 ```
+
+##### setter 循环依赖
+
+表示通过setter注入方式构成的循环依赖。
+
+- 对于setter注入造成的依赖是通过Spring容器提前暴露刚完成构造器注入但未完成其他步骤（如setter注入）的bean来完成的
+
+- 而且只能解决单例作用域的bean循环依赖。通过提前暴露一个单例工厂方法，从而使其他bean能引用到该bean
+
+
+
+##### prototype循环依赖
+
+对于“prototype”作用域bean，Spring容器无法完成依赖注入，因为Spring容器不进行缓存“prototype”作用域的bean，因此无法提前暴露一个创建中的bean。
+
+
+
+
+
+### 5.7、创建bean
+
+#### 5.7.4、初始化bean
+
+##### 1、激活 Aware 方法
+
+> Spring 提供一些 aware 相关接口：BeanFactoryAware、ApplicationContextAware、ResourceLoaderAware、ServletContextAware
+>
+> 实现了这些接口，可以获取对应的资源：获取 ApplicationContext 容器...
+
+```java
+@Component
+@Slf4j
+public class ApplicationContextAwareImpl implements ApplicationContextAware{
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        log.info("进入 applicationContextAware");
+        System.out.println("xxxxxxxxxx");
+        ApplicationContextUtils.setApplicationContext(applicationContext);
+    }
+}
+```
+
+```java
+@Slf4j
+public class AnnotationTest {
+    public static void main(String[] args) {
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(SpringContext.class);
+        UserSvc userSvc = context.getBean(UserSvc.class);
+        userSvc.sayHello();
+        UserSvc bean = ApplicationContextUtils.getBean(UserSvc.class);
+        log.info("userSvc equals bean {}", userSvc.equals(bean));
+        log.info("userSvc == bean {}", userSvc == bean);
+    }
+}
+```
+
+
+
+
+
+
+
+[参考博客](https://blog.csdn.net/u010002184/article/details/80550228)
+
+```java
+protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
+   //...
+    // 执行 aware 
+    invokeAwareMethods(beanName, bean);
+		Object wrappedBean = bean;
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+		}
+		try {
+            // 执行初始化方法
+			invokeInitMethods(beanName, wrappedBean, mbd);
+		}
+		//..
+
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+		}
+		return wrappedBean;
+}
+```
+
+
+
+
+
+## 工具类
+
+### 操作 bean
+
+BeanUtils
+
+> 操作bean
+
+
+
+
+
+ReflectionUtils
+
+> 操作反射
+
+## 面试题
+
+### 所有的单例 bean 都是使用的时候才去实例化的吗？
+
+
+
+
+
+### Aware 方法
+
+> Spring 提供一些 aware 相关接口：
+>
+> BeanFactoryAware
+>
+> ApplicationContextAware
+>
+> ResourceLoaderAware
+>
+> ServletContextAware
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## 错误处理
 

@@ -3,6 +3,7 @@ package com.bigguy.spring.test;
 import com.bigguy.spring.entity.User;
 import com.bigguy.spring.service.UserFactoryBean;
 import com.bigguy.spring.service.UserSvc;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.xml.XmlBeanFactory;
 import org.springframework.context.ApplicationContext;
@@ -30,13 +31,15 @@ public class XmlTest {
         System.out.println(user.equals(user2));
     }
 
+    @Test
     private static void testBeanFactory() {
         BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
         UserSvc userSvc = beanFactory.getBean(UserSvc.class);
         UserSvc userSvc2 = (UserSvc)beanFactory.getBean("userSvc");
+        System.out.println("ff");
     }
 
-
+    @Test
     private static void testMain() {
         String xmlPath = "spring-context.xml";
         ApplicationContext applicationContext = new ClassPathXmlApplicationContext(xmlPath);

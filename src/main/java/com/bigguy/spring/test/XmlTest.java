@@ -1,6 +1,7 @@
 package com.bigguy.spring.test;
 
 import com.bigguy.spring.entity.User;
+import com.bigguy.spring.service.HelloServiceTest;
 import com.bigguy.spring.service.UserFactoryBean;
 import com.bigguy.spring.service.UserSvc;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,15 @@ public class XmlTest {
     private static final String SPRING_CONFIG_PATH = "spring-context.xml";
 
     public static void main(String[] args) {
+        BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
+        HelloServiceTest bean = beanFactory.getBean(HelloServiceTest.class);
+        bean.testSayHello();
+
+//        testBeanInstantce();
+
+    }
+
+    private static void testBeanInstantce() {
         BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
         User user = beanFactory.getBean( "userFactory", User.class);
 

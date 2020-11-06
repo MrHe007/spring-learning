@@ -1116,9 +1116,25 @@ public class AnnotationTest {
 }
 ```
 
+##### 2、执行 PostProcessor
+
+[参考博客](https://blog.csdn.net/geekjoker/article/details/79868945)
+
+```java
+
+```
 
 
 
+
+
+
+
+##### 3、bean 中的 init 方法 和 InitializingBean.afterPropertiesSet 区别
+
+1、如果 bean 实现了 `InitializingBean` 接口。那么bean在初始化的时候，会先执行它的 `afterPropertiesSet`方法
+
+2、如果 bean 同时在声明的时候指定了 `init`方法，会在执行完 `afterPropertiesSet`方法后执行
 
 
 
@@ -1128,7 +1144,7 @@ public class AnnotationTest {
 protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
    //...
     // 执行 aware 
-    invokeAwareMethods(beanName, bean);
+    	invokeAwareMethods(beanName, bean);
 		Object wrappedBean = bean;
 		if (mbd == null || !mbd.isSynthetic()) {
 			wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
@@ -1144,9 +1160,38 @@ protected Object initializeBean(final String beanName, final Object bean, RootBe
 		}
 		return wrappedBean;
 }
+
+// 如果是aware 的实现类.
+private void invokeAwareMethods(final String beanName, final Object bean) {
+    if (bean instanceof Aware) {
+        if (bean instanceof BeanNameAware) {
+            ((BeanNameAware) bean).setBeanName(beanName);
+        }
+        if (bean instanceof BeanClassLoaderAware) {
+            ((BeanClassLoaderAware) bean).setBeanClassLoader(getBeanClassLoader());
+        }
+        if (bean instanceof BeanFactoryAware) {
+            ((BeanFactoryAware) bean).setBeanFactory(AbstractAutowireCapableBeanFactory.this);
+        }
+    }
+}
 ```
 
+##### 4、注册DisposableBean
 
+> Spring 提供对于初始化方法的扩展入口，同样也提供销毁的方法扩展入口。对于销毁方法， destroy-method
+
+
+
+## 6、容器的功能扩展
+
+> ApplicationContext 包含 BeanFactory 的所有功能，是对其的扩展。
+
+```java
+BeanFactory beanFactory =  new XmlBeanFactory(new ClassPathResource(SPRING_CONFIG_PATH));
+
+ApplicationContext context = new ClassPathXmlApplicationContext("spring-config.xml");
+```
 
 
 
